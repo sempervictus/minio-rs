@@ -24,22 +24,21 @@ pub fn mk_request(
     svr_str: &str,
     sign_hdrs: &Vec<(HeaderName, HeaderValue)>,
 ) -> Result<Request<Body>, minio::Err> {
-    let mut request = Request::builder();
+    let request = Request::builder();
     let uri_str = svr_str.trim_end_matches('/');
     debug!("uri_str: {}", uri_str);
     let upd_uri = format!("{}{}?{}", uri_str, &r.mk_path(), &r.mk_query());
     debug!("upd_uri: {}", upd_uri);
 
-    request.uri(&upd_uri).method(&r.method);
+    let mut request = request.uri(&upd_uri).method(&r.method);
+    let headers = request.headers_mut().unwrap();
     for hdr in r
         .headers
         .iter()
         .map(|(x, y)| (x.clone(), y.clone()))
         .chain(sign_hdrs.iter().map(|x| x.clone()))
     {
-        request.header(hdr.0, hdr.1);
+        headers.insert(hdr.0, hdr.1);
     }
-    request
-        .body(r.body)
-        .map_err(|err| minio::Err::HttpErr(err))
+    request.body(r.body).map_err(|err| minio::Err::HttpErr(err))
 }

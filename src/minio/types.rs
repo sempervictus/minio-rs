@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
+use crate::minio::xml::S3GenericError;
 use bytes::Bytes;
-use futures::stream::Stream;
 use hyper::header::{
     HeaderMap, HeaderValue, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LANGUAGE,
     CONTENT_LENGTH, CONTENT_TYPE, ETAG, EXPIRES,
@@ -26,7 +26,6 @@ use roxmltree;
 use std::collections::HashMap;
 use std::string;
 use time::{strptime, Tm};
-use crate::minio::xml::S3GenericError;
 
 #[derive(Clone)]
 pub struct Region(String);
@@ -50,7 +49,7 @@ pub enum Err {
     InvalidUrl(String),
     InvalidEnv(String),
     InvalidTmFmt(String),
-    HttpErr(http::Error),
+    HttpErr(hyper::http::Error),
     HyperErr(hyper::Error),
     FailStatusCodeErr(hyper::StatusCode, Bytes),
     Utf8DecodingErr(string::FromUtf8Error),
@@ -77,7 +76,7 @@ pub struct GetObjectResp {
     pub content_disposition: Option<String>,
     pub content_encoding: Option<String>,
 
-    resp: Response<Body>,
+    pub resp: Response<Body>,
 }
 
 impl GetObjectResp {
@@ -90,7 +89,7 @@ impl GetObjectResp {
             (Some(cl), Some(etag)) => Ok(GetObjectResp {
                 user_metadata: extract_user_meta(h),
                 object_size: cl,
-                etag: etag,
+                etag,
 
                 content_type: hv2s(h.get(CONTENT_TYPE)),
                 content_language: hv2s(h.get(CONTENT_LANGUAGE)),
@@ -103,11 +102,6 @@ impl GetObjectResp {
             }),
             _ => Err(Err::MissingRequiredParams),
         }
-    }
-
-    // Consumes GetObjectResp
-    pub fn get_object_stream(self) -> impl Stream<Item = hyper::Chunk, Error = Err> {
-        self.resp.into_body().map_err(|err| Err::HyperErr(err))
     }
 }
 

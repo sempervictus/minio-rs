@@ -15,14 +15,8 @@
  * limitations under the License.
  */
 
-use std::collections::HashMap;
-
-use crate::minio::net::{Values, ValuesAccess};
-use crate::minio::{Client, Err, S3Req, SPACE_BYTE};
-use futures::future::Future;
-use futures::{stream, Stream};
-use hyper::{Body, HeaderMap, Method};
 use serde_derive::Deserialize;
+use std::collections::HashMap;
 
 /// Notification event object metadata.
 #[derive(Deserialize, Debug)]
@@ -116,62 +110,67 @@ pub struct NotificationInfo {
     pub err: Option<String>,
 }
 
-impl Client {
-    /// listen_bucket_notificaion - Get bucket notifications for the bucket_name.
-    pub fn listen_bucket_notification(
-        &self,
-        bucket_name: &str,
-        prefix: Option<String>,
-        suffix: Option<String>,
-        events: Vec<String>,
-    ) -> impl Stream<Item = NotificationInfo, Error = Err> {
-        // Prepare request query parameters
-        let mut query_params: Values = Values::new();
-        query_params.set_value("prefix", prefix);
-        query_params.set_value("suffix", suffix);
-        let opt_events: Vec<Option<String>> = events.into_iter().map(|evt| Some(evt)).collect();
-        query_params.insert("events".to_string(), opt_events);
+// impl Client {
+//     // listen_bucket_notificaion - Get bucket notifications for the bucket_name.
+//     // pub async fn listen_bucket_notification(
+//     //     &self,
+//     //     bucket_name: &str,
+//     //     prefix: Option<String>,
+//     //     suffix: Option<String>,
+//     //     events: Vec<String>,
+//     // ) -> impl Stream<Item = NotificationInfo> {
+//     //     // Prepare request query parameters
+//     //     let mut query_params: Values = Values::new();
+//     //     query_params.set_value("prefix", prefix);
+//     //     query_params.set_value("suffix", suffix);
+//     //     let opt_events: Vec<Option<String>> = events.into_iter().map(|evt| Some(evt)).collect();
+//     //     query_params.insert("events".to_string(), opt_events);
 
-        // build signed request
-        let s3_req = S3Req {
-            method: Method::GET,
-            bucket: Some(bucket_name.to_string()),
-            object: None,
-            headers: HeaderMap::new(),
-            query: query_params,
-            body: Body::empty(),
-            ts: time::now_utc(),
-        };
+//     //     // build signed request
+//     //     let s3_req = S3Req {
+//     //         method: Method::GET,
+//     //         bucket: Some(bucket_name.to_string()),
+//     //         object: None,
+//     //         headers: HeaderMap::new(),
+//     //         query: query_params,
+//     //         body: Body::empty(),
+//     //         ts: time::now_utc(),
+//     //     };
 
-        self.signed_req_future(s3_req, Ok(Body::empty()))
-            .map(|resp| {
-                // Read the whole body for bucket location response.
-                resp.into_body()
-                    .map_err(|e| Err::HyperErr(e))
-                    .filter(|c| {
-                        // filter out white spaces sent by the server to indicate it's still alive
-                        c[0] != SPACE_BYTE[0]
-                    })
-                    .map(|chunk| {
-                        // Split the chunk by lines and process.
-                        // TODO: Handle case when partial lines are present in the chunk
-                        let chunk_lines = String::from_utf8(chunk.to_vec())
-                            .map(|p| {
-                                let lines =
-                                    p.lines().map(|s| s.to_string()).collect::<Vec<String>>();
-                                stream::iter_ok(lines.into_iter())
-                            })
-                            .map_err(|e| Err::Utf8DecodingErr(e));
-                        futures::future::result(chunk_lines).flatten_stream()
-                    })
-                    .flatten()
-                    .map(|line| {
-                        // Deserialize the notification
-                        let notification_info: NotificationInfo =
-                            serde_json::from_str(&line).unwrap();
-                        notification_info
-                    })
-            })
-            .flatten_stream()
-    }
-}
+//     //     let resp = self.signed_req_future(s3_req, Ok(Body::empty())).await?.into_body();
+
+//     //     if resp[0] != SPACE_BYTE[0] {
+
+//     //     }
+
+//     //     self.signed_req_future(s3_req, Ok(Body::empty()))
+//     //         .map(|resp| {
+//     //             // Read the whole body for bucket location response.
+//     //             resp.into_body()
+//     //                 .map_err(|e| Err::HyperErr(e))
+//     //                 .filter(|c| {
+//     //                     // filter out white spaces sent by the server to indicate it's still alive
+//     //                     c[0] != SPACE_BYTE[0]
+//     //                 })
+//     //                 .map(|chunk| {
+//     //                     // Split the chunk by lines and process.
+//     //                     // TODO: Handle case when partial lines are present in the chunk
+//     //                     let chunk_lines = String::from_utf8(chunk.to_vec())
+//     //                         .map(|p| {
+//     //                             let lines =
+//     //                                 p.lines().map(|s| s.to_string()).collect::<Vec<String>>();
+//     //                             stream::iter(lines.into_iter())
+//     //                         })
+//     //                         .map_err(|e| Err::Utf8DecodingErr(e));
+//     //                     futures::future::ok(chunk_lines)
+//     //                 })
+//     //                 .map(|&line| {
+//     //                     // Deserialize the notification
+//     //                     let notification_info: NotificationInfo =
+//     //                         serde_json::from_str(&line).unwrap();
+//     //                     notification_info
+//     //                 })
+//     //         })
+//     //         .flatten_stream()
+//     // }
+// }

@@ -19,66 +19,45 @@ pub mod minio;
 
 #[cfg(test)]
 mod tests {
-    use futures::{future::Future, stream::Stream};
-    use hyper::rt;
-    use log::debug;
+    use hyper::body::Buf;
 
+    use crate::minio::Credentials;
 
     use super::*;
 
-    fn get_local_default_server() -> minio::Client {
-        match minio::Client::new("http://localhost:9000") {
-            Ok(mut c) => {
-                c.set_credentials(minio::Credentials::new("minio", "minio123"));
-                c
-            }
-            Err(_) => panic!("could not make local client"),
-        }
-    }
+    #[tokio::test]
+    async fn test_lib_functions() -> Result<(), crate::minio::types::Err> {
+        std::env::set_var("RUST_LOG", "debug");
+        env_logger::init();
+        let mut c = minio::Client::new("http://localhost:9000/")?;
+        c.set_credentials(Credentials::new("minioadmin", "minioadmin"));
+        println!("{}", c.server);
+        let bucket = "songs";
 
-    #[test]
-    fn test_lib_functions() {
-        println!("test func");
-        rt::run(rt::lazy(|| {
-            let c = minio::Client::get_play_client();
-            let bucket_name = "aaaa";
+        let r = c
+            .put_object_req(
+                bucket,
+                "hhhhhhhhhh",
+                vec![],
+                "object content".as_bytes().to_vec(),
+            )
+            .await?;
+        println!("object: {} {} {:?}", r.object_size, r.etag, r.content_type);
 
-            c.put_object_req(bucket_name, "hhhhhhhhhh", vec![], "object content".as_bytes().to_vec())
-                .and_then(|g| {
-                    print!("object: {} {} {:?}", g.object_size, g.etag, g.content_type);
-                    g.get_object_stream().concat2()
-                })
-                .map(|c| {
-                    println!("{:?}", c);
-                })
-                .map_err(|c| {
-                    println!("{:?}", c);
-                })
-                .map(|_| {})
-        }));
+        let mut response = c.get_object_req(bucket, "hhhhhhhhhh", vec![]).await?;
 
-        rt::run(rt::lazy(|| {
-            let c = minio::Client::get_play_client();
-            let bucket = "aaaa";
+        let body = response.resp.body_mut();
 
-            c.get_object_req(bucket, "hhhhhhhhhh", vec![])
-                .and_then(|g| {
-                    debug!("object: {} {} {:?}", g.object_size, g.etag, g.content_type);
-                    g.get_object_stream().concat2()
-                })
-                .map(|c| debug!("get obj res: {:?}", c))
-                .map_err(|c| debug!("err res: {:?}", c))
-                .map(|_| {})
-        }));
+        let bytes = hyper::body::aggregate(body).await.unwrap();
 
-        rt::run(rt::lazy(|| {
-            let c = minio::Client::get_play_client();
-            let bucket = "aaaa";
+        println!("{:#?}", String::from_utf8(bytes.chunk().to_vec()));
 
-            c.delete_bucket(bucket)
-                .map(|_| debug!("Deleted!"))
-                .map_err(|err| debug!("del err: {:?}", err))
-                .map(|_| {})
-        }));
+        println!("object: {} {} {:?}", r.object_size, r.etag, r.content_type);
+
+        c.make_bucket("test").await?;
+
+        c.delete_bucket("test").await?;
+
+        Ok(())
     }
 }

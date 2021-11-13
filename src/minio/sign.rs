@@ -18,9 +18,10 @@
 use std::collections::{HashMap, HashSet};
 
 use hyper::header::{
-    AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
+    HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT,
 };
 use log::debug;
+use ring::hmac::HMAC_SHA256;
 use ring::{digest, hmac};
 use time::Tm;
 
@@ -43,11 +44,10 @@ fn mk_scope(t: &Tm, r: &minio::Region) -> String {
 // Returns list of SORTED headers that will be signed.
 // TODO: verify that input headermap contains only ASCII valued headers
 fn get_headers_to_sign(h: HeaderMap) -> Vec<(String, String)> {
-    let ignored_hdrs: HashSet<HeaderName> = vec![
-        AUTHORIZATION,
-        CONTENT_LENGTH,
-        CONTENT_TYPE,
-        USER_AGENT].into_iter().collect();
+    let ignored_hdrs: HashSet<HeaderName> =
+        vec![AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT]
+            .into_iter()
+            .collect();
 
     let mut res: Vec<(String, String)> = h
         .iter()
@@ -59,7 +59,8 @@ fn get_headers_to_sign(h: HeaderMap) -> Vec<(String, String)> {
                     .expect("Unexpected non-ASCII header value!")
                     .to_string(),
             )
-        }).collect();
+        })
+        .collect();
     res.sort();
     res
 }
@@ -139,11 +140,11 @@ fn string_to_sign(ts: &Tm, scope: &str, canonical_request: &str) -> String {
         scope,
         &sha256_digest,
     ]
-        .join("\n")
+    .join("\n")
 }
 
-fn hmac_sha256(msg: &str, key: &[u8]) -> hmac::Signature {
-    let key = hmac::SigningKey::new(&digest::SHA256, key);
+fn hmac_sha256(msg: &str, key: &[u8]) -> hmac::Tag {
+    let key = hmac::Key::new(HMAC_SHA256, key);
     hmac::sign(&key, msg.as_bytes())
 }
 
@@ -231,8 +232,10 @@ mod sign_tests {
 
         assert_eq!(
             get_headers_to_sign(map),
-            vec![("first".parse().unwrap(), "123".parse().unwrap()),
-                 ("second".parse().unwrap(), "123".parse().unwrap())]
+            vec![
+                ("first".parse().unwrap(), "123".parse().unwrap()),
+                ("second".parse().unwrap(), "123".parse().unwrap())
+            ]
         );
     }
 }

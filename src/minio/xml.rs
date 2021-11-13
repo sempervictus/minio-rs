@@ -19,8 +19,8 @@ extern crate quick_xml;
 extern crate serde;
 
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::str;
+use std::str::FromStr;
 
 use hyper::body::Body;
 use roxmltree;
@@ -60,41 +60,31 @@ pub struct Error {
     Region: Option<String>,
 }
 
-
 #[derive(Error, Debug, PartialEq)]
 pub enum S3GenericError {
     #[error("no such bucket: {error:?}")]
-    NoSuchBucket {
-        error: Error,
-    },
+    NoSuchBucket { error: Error },
     #[error("unknown error: {error:?}")]
-    Unknown {
-        error: Error,
-    },
-}
-
-
-pub(crate) fn parse_s3_error(response_xml: &str) -> S3GenericError {
-    println!("{}",response_xml);
-    let doc: Error = quick_xml::de::from_str(response_xml).unwrap();
-    match doc.Code.as_str() {
-        "NoSuchBucket" => {
-            return S3GenericError::NoSuchBucket {
-                error: doc,
-            };
-        }
-        _ => {
-            return S3GenericError::Unknown {
-                error: doc,
-            };
-        }
-    }
+    Unknown { error: Error },
 }
 
 #[cfg(test)]
 mod xml_tests {
 
     use super::*;
+
+    fn parse_s3_error(response_xml: &str) -> S3GenericError {
+        println!("{}", response_xml);
+        let doc: Error = quick_xml::de::from_str(response_xml).unwrap();
+        match doc.Code.as_str() {
+            "NoSuchBucket" => {
+                return S3GenericError::NoSuchBucket { error: doc };
+            }
+            _ => {
+                return S3GenericError::Unknown { error: doc };
+            }
+        }
+    }
 
     #[test]
     fn parse_xml_error() {
@@ -114,10 +104,12 @@ mod xml_tests {
         let s3_error = parse_s3_error(response_xml);
 
         print!("test! {:?}", s3_error);
-        assert!(matches!(s3_error, S3GenericError::NoSuchBucket {cerror} ));
+        assert!(matches!(
+            s3_error,
+            S3GenericError::NoSuchBucket { error: _s3_error }
+        ));
     }
 }
-
 
 pub fn parse_bucket_list(s: String) -> Result<Vec<BucketInfo>, Err> {
     let res = roxmltree::Document::parse(&s);
@@ -156,7 +148,7 @@ pub fn parse_list_objects(s: String) -> Result<ListObjectsResp, Err> {
     let doc_res = roxmltree::Document::parse(&s);
     match doc_res {
         Ok(doc) => parse_list_objects_result(doc),
-        Err(err) => panic!(err),
+        Err(err) => panic!("{}", err),
     }
 }
 
@@ -185,16 +177,16 @@ fn get_child_node_or<'a>(node: &'a roxmltree::Node, tag_name: &str, default: &'a
 }
 
 fn parse_child_content<T>(node: &roxmltree::Node, tag: &str) -> Result<T, Err>
-    where
-        T: FromStr,
+where
+    T: FromStr,
 {
     let content = get_child_node(node, tag).ok_or(Err::XmlElemMissing(format!("{:?}", tag)))?;
     str::parse::<T>(content).map_err(|_| Err::XmlElemParseErr(format!("{}", tag)))
 }
 
 fn parse_tag_content<T>(node: &roxmltree::Node) -> Result<T, Err>
-    where
-        T: FromStr,
+where
+    T: FromStr,
 {
     let content = must_get_node_text(node)?;
     str::parse::<T>(content).map_err(|_| Err::XmlElemParseErr(format!("{:?}", node.tag_name())))
@@ -221,7 +213,7 @@ fn parse_object_infos(node: roxmltree::Node) -> Result<Vec<ObjectInfo>, Err> {
             .children()
             .filter(|node| node.has_tag_name("StorageClass"));
         for (key, (mtime, (etag, (size, storage_class)))) in
-        keys.zip(mtimes.zip(etags.zip(sizes.zip(storage_classes))))
+            keys.zip(mtimes.zip(etags.zip(sizes.zip(storage_classes))))
         {
             let sz: i64 = parse_tag_content(&size)?;
             let key_text = must_get_node_text(&key)?;
