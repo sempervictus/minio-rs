@@ -17,6 +17,7 @@
 
 use crate::minio::xml::S3GenericError;
 use bytes::Bytes;
+use hyper::body::Buf;
 use hyper::header::{
     HeaderMap, HeaderValue, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LANGUAGE,
     CONTENT_LENGTH, CONTENT_TYPE, ETAG, EXPIRES,
@@ -101,6 +102,13 @@ impl GetObjectResp {
                 resp: r,
             }),
             _ => Err(Err::MissingRequiredParams),
+        }
+    }
+    pub async fn bytes(&mut self) -> Result<Vec<u8>, Err> {
+        let body = self.resp.body_mut();
+        match hyper::body::aggregate(body).await {
+            Ok(buf) => Ok(buf.chunk().to_vec()),
+            Err(err) => Err(Err::HyperErr(err)),
         }
     }
 }
