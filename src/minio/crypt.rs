@@ -1,10 +1,10 @@
+use argon2::{Config, ThreadMode, Variant, Version};
 use rand::Rng;
 use std::error::Error;
-use argon2::{Config, ThreadMode, Variant, Version};
 
-use std::io::Write;
-use sio::{Key, Nonce, Aad, EncWriter, DecWriter, Close};
 use sio::ring::{AES_256_GCM, CHACHA20_POLY1305};
+use sio::{Aad, Close, DecWriter, EncWriter, Key, Nonce};
+use std::io::Write;
 
 const ARGON2ID_AES_GCM: u8 = 0x00;
 const ARGON2ID_CHACHA20_POLY1305: u8 = 0x01;
@@ -13,7 +13,7 @@ const ARGON2ID_CHACHA20_POLY1305: u8 = 0x01;
 const ARGON_CONFIG: argon2::Config = Config {
     variant: Variant::Argon2id,
     version: Version::Version13,
-    mem_cost: 64*1024,
+    mem_cost: 64 * 1024,
     time_cost: 1,
     lanes: 4,
     thread_mode: ThreadMode::Parallel,

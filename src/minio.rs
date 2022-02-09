@@ -41,7 +41,7 @@ pub mod types;
 mod woxml;
 mod xml;
 mod crypt;
-use crypt::sio_encrypt;
+use crypt::*;
 
 pub const SPACE_BYTE: &[u8; 1] = b" ";
 
@@ -421,8 +421,102 @@ impl Client {
         self.signed_req_future(s3_req, Ok(Body::from(data.clone()))).await
     }
 
-    pub async fn make_user(&self, creds: Credentials) -> Result<Response<Body>, types::Err> {
-        self.set_user(creds, true).await
+    pub async fn set_user_status(&self, access_key: String, enabled: bool) -> Result<Response<Body>, types::Err> {
+        let bucket = "minio/admin/v3";
+        let object = "set-user-status";
+        let mut qparams: Values = Values::new();
+        qparams.set_value("accessKey", Some(access_key));
+        qparams.set_value("status", if enabled {Some("enabled".to_owned())}  else  {Some("disabled".to_owned())});
+
+        let s3_req = S3Req {
+            method: Method::PUT,
+            bucket: Some(bucket.to_string()),
+            object: Some(object.to_string()),
+            headers: HeaderMap::new(),
+            query: qparams,
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, Ok(Body::empty())).await
+    }
+
+    pub async fn remove_user(&self, access_key: String) -> Result<Response<Body>, types::Err> {
+        let bucket = "minio/admin/v3";
+        let object = "remove-user";
+        let mut qparams: Values = Values::new();
+        qparams.set_value("accessKey", Some(access_key));
+
+        let s3_req = S3Req {
+            method: Method::DELETE,
+            bucket: Some(bucket.to_string()),
+            object: Some(object.to_string()),
+            headers: HeaderMap::new(),
+            query: qparams,
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, Ok(Body::empty())).await
+    }
+
+    pub async fn get_user(&self, access_key: String) -> Result<Response<Body>, types::Err> {
+        let bucket = "minio/admin/v3";
+        let object = "user-info";
+        let mut qparams: Values = Values::new();
+        qparams.set_value("accessKey", Some(access_key));
+
+        let s3_req = S3Req {
+            method: Method::GET,
+            bucket: Some(bucket.to_string()),
+            object: Some(object.to_string()),
+            headers: HeaderMap::new(),
+            query: qparams,
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, Ok(Body::empty())).await
+    }
+
+    pub async fn list_users(&self) -> Result<String, types::Err> {
+        let bucket = "minio/admin/v3";
+        let object = "list-users";
+        let s3_req = S3Req {
+            method: Method::GET,
+            bucket: Some(bucket.to_string()),
+            object: Some(object.to_string()),
+            headers: HeaderMap::new(),
+            query: Values::new(),
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        match self.signed_req_future(s3_req, Ok(Body::empty())).await {
+            Ok(resp) => {
+                let passwd = match &self.credentials {
+                    Some(cred) => cred.secret_key.clone(),
+                    None => String::from("this arm should be unreachable")
+                };
+                let mut body = resp.into_body();
+                let ciphertext = chunk_to_bytes(&mut body).await?;
+                let plaintext = sio_decrypt(passwd, ciphertext).await.unwrap();
+                let user_list = String::from_utf8(plaintext).unwrap();
+                Ok(user_list)
+            },
+            Err(e) => Err(e)
+        }
+    }
+
+    pub async fn make_user(&self, creds: Credentials) -> Result<String, types::Err> {
+        let ak = String::from(&creds.access_key);
+        match  self.set_user(creds, true).await {
+            Ok(_) => match self.get_user(ak).await {
+                Ok(resp) => {
+                    let mut body = resp.into_body();
+                    let s = chunk_to_string(&mut body).await?;
+                    Ok(s)
+                }
+                Err(err) => Err(err),
+            },
+            Err(e) => Err(e)
+        }
     }
 }
 
@@ -450,6 +544,13 @@ async fn chunk_to_string(chunk: &mut hyper::Body) -> Result<String, Err> {
             Err(e) => Err(Err::Utf8DecodingErr(e)),
             Ok(s) => Ok(s.to_string()),
         },
+        Err(err) => Err(Err::HyperErr(err)),
+    }
+}
+
+async fn chunk_to_bytes(chunk: &mut hyper::Body) -> Result<Vec<u8>, Err> {
+    match hyper::body::aggregate(chunk).await {
+        Ok(s) => Ok(s.chunk().to_vec()),
         Err(err) => Err(Err::HyperErr(err)),
     }
 }
