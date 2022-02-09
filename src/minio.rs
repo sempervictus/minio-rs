@@ -40,6 +40,8 @@ mod sign;
 pub mod types;
 mod woxml;
 mod xml;
+mod crypt;
+use crypt::sio_encrypt;
 
 pub const SPACE_BYTE: &[u8; 1] = b" ";
 
@@ -393,6 +395,34 @@ impl Client {
         let mut body = resp.into_body();
         let s = chunk_to_string(&mut body).await?;
         xml::parse_list_objects(s)
+    }
+
+    pub async fn set_user(&self, creds: Credentials, enabled: bool) -> Result<Response<Body>, types::Err> {
+        let bucket = "minio/admin/v3";
+        let object = "add-user";
+        let json   = format!("{{\"SecretKey\":\"{}\",\"Status\":\"{}\"}}", &creds.secret_key, if enabled {"enabled"}  else  {"disabled"});
+        let passwd = match &self.credentials {
+            Some(cred) => cred.secret_key.clone(),
+            None => String::from("this arm should be unreachable")
+        };
+        let data = sio_encrypt(passwd, json.as_bytes().to_vec(), true).await.unwrap();
+        let mut qparams: Values = Values::new();
+        qparams.set_value("accessKey", Some(creds.access_key));
+
+        let s3_req = S3Req {
+            method: Method::PUT,
+            bucket: Some(bucket.to_string()),
+            object: Some(object.to_string()),
+            headers: HeaderMap::new(),
+            query: qparams,
+            body: Body::from(data.clone()),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, Ok(Body::from(data.clone()))).await
+    }
+
+    pub async fn make_user(&self, creds: Credentials) -> Result<Response<Body>, types::Err> {
+        self.set_user(creds, true).await
     }
 }
 
