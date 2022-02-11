@@ -25,6 +25,7 @@ use std::str;
 use std::string::String;
 use time;
 use time::Tm;
+use serde_derive::Serialize;
 
 pub use hyper::http::StatusCode;
 
@@ -504,6 +505,22 @@ impl Client {
         }
     }
 
+    pub async fn set_group(&self, params: GroupParams) -> Result<Response<Body>, types::Err> {
+        let bucket = "minio/admin/v3";
+        let object = "update-group-members";
+        let data = serde_json::to_string(&params).unwrap();
+        let s3_req = S3Req {
+            method: Method::PUT,
+            bucket: Some(bucket.to_string()),
+            object: Some(object.to_string()),
+            headers: HeaderMap::new(),
+            query: Values::new(),
+            body: Body::from(data.clone()),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, Ok(Body::from(data.clone()))).await
+    }
+
     pub async fn make_user(&self, creds: Credentials) -> Result<String, types::Err> {
         let ak = String::from(&creds.access_key);
         match  self.set_user(creds, true).await {
@@ -553,6 +570,15 @@ async fn chunk_to_bytes(chunk: &mut hyper::Body) -> Result<Vec<u8>, Err> {
         Ok(s) => Ok(s.chunk().to_vec()),
         Err(err) => Err(Err::HyperErr(err)),
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupParams {
+    pub group: String,
+    pub members: Vec<String>,
+    pub group_status: String,
+    pub is_remove: bool
 }
 
 pub struct S3Req {
