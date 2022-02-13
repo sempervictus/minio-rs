@@ -95,6 +95,7 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates new client
     pub fn new(server: &str) -> Result<Client, Err> {
         let valid = server.parse::<Uri>();
         match valid {
@@ -125,14 +126,43 @@ impl Client {
         }
     }
 
+    /// Sets client credentials
     pub fn set_credentials(&mut self, credentials: Credentials) {
         self.credentials = Some(credentials);
     }
 
+    /// Sets region of S3 service
     pub fn set_region(&mut self, r: Region) {
         self.region = r;
     }
 
+    /// Converts a `hyper::Chunk` into a string.
+    pub async fn chunk_to_string(&self, chunk: &mut hyper::Body) -> Result<String, Err> {
+        match hyper::body::aggregate(chunk).await {
+            Ok(s) => match String::from_utf8(s.chunk().to_vec()) {
+                Err(e) => Err(Err::Utf8DecodingErr(e)),
+                Ok(s) => Ok(s.to_string()),
+            },
+            Err(err) => Err(Err::HyperErr(err)),
+        }
+    }
+
+    /// Converts a `hyper::Chunk` into a vector of bytes.
+    pub async fn chunk_to_bytes(&self, chunk: &mut hyper::Body) -> Result<Vec<u8>, Err> {
+        match hyper::body::aggregate(chunk).await {
+            Ok(s) => Ok(s.chunk().to_vec()),
+            Err(err) => Err(Err::HyperErr(err)),
+        }
+    }
+
+    /// Converts a `hyper::Response` into a string
+    pub async fn parse_response(&self, resp:hyper::Response<Body>) -> Result<String, Err> {
+        let mut body = resp.into_body();
+        let s = self.chunk_to_string(&mut body).await?;
+        Ok(s)
+    }
+
+    /// Adds host header to the provided `HeaderMap`
     fn add_host_header(&self, header_map: &mut HeaderMap) {
         let host_val = match self.server.port() {
             Some(port) => format!("{}:{}", self.server.host().unwrap_or(""), port),
@@ -146,6 +176,7 @@ impl Client {
         }
     }
 
+    /// Creates client and connects to public play service
     pub fn get_play_client() -> Client {
         Client {
             server: "https://play.min.io:9000".parse::<Uri>().unwrap(),
@@ -161,6 +192,7 @@ impl Client {
         }
     }
 
+    /// Core request creation
     async fn signed_req_future(
         &self,
         mut s3_req: S3Req,
@@ -206,69 +238,7 @@ impl Client {
         }
     }
 
-    /// get_bucket_location - Get location for the bucket_name.
-    pub async fn get_bucket_location(&self, bucket_name: &str) -> Result<Region, Err> {
-        let mut qp = Values::new();
-        qp.set_value("location", None);
-
-        let s3_req = S3Req {
-            method: Method::GET,
-            bucket: Some(bucket_name.to_string()),
-            object: None,
-            headers: HeaderMap::new(),
-            query: qp,
-            body: Body::empty(),
-            ts: time::now_utc(),
-        };
-        match self.signed_req_future(s3_req, Ok(Body::empty())).await {
-            Ok(resp) => {
-                let mut body = resp.into_body();
-                let s = chunk_to_string(&mut body).await?;
-                xml::parse_bucket_location(s)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    pub async fn delete_bucket(&self, bucket_name: &str) -> Result<(), Err> {
-        let s3_req = S3Req {
-            method: Method::DELETE,
-            bucket: Some(bucket_name.to_string()),
-            object: None,
-            headers: HeaderMap::new(),
-            query: Values::new(),
-            body: Body::empty(),
-            ts: time::now_utc(),
-        };
-        self.signed_req_future(s3_req, Ok(Body::empty())).await?;
-        Ok(())
-    }
-
-    pub async fn bucket_exists(&self, bucket_name: &str) -> Result<bool, Err> {
-        let s3_req = S3Req {
-            method: Method::HEAD,
-            bucket: Some(bucket_name.to_string()),
-            object: None,
-            headers: HeaderMap::new(),
-            query: Values::new(),
-            body: Body::empty(),
-            ts: time::now_utc(),
-        };
-        let res = self.signed_req_future(s3_req, Ok(Body::empty())).await;
-        match res {
-            Ok(_) => Ok(true),
-            Err(Err::FailStatusCodeErr(st, b)) => {
-                let code = st.as_u16();
-                if code == 404 {
-                    Ok(false)
-                } else {
-                    Err(Err::FailStatusCodeErr(st, b))
-                }
-            }
-            Err(err) => Err(err),
-        }
-    }
-
+    /// GET request abstraction
     pub async fn get_object_req(
         &self,
         bucket_name: &str,
@@ -297,6 +267,7 @@ impl Client {
         GetObjectResp::new(body)
     }
 
+    /// PUT request abstraction
     pub async fn put_object_req(
         &self,
         bucket_name: &str,
@@ -326,38 +297,7 @@ impl Client {
         GetObjectResp::new(body)
     }
 
-    pub async fn make_bucket(&self, bucket_name: &str) -> Result<(), Err> {
-        let xml_body_res = xml::get_mk_bucket_body();
-        let bucket = bucket_name.clone().to_string();
-        let s3_req = S3Req {
-            method: Method::PUT,
-            bucket: Some(bucket),
-            object: None,
-            query: Values::new(),
-            headers: HeaderMap::new(),
-            body: Body::empty(),
-            ts: time::now_utc(),
-        };
-        self.signed_req_future(s3_req, xml_body_res).await?;
-        Ok(())
-    }
-
-    pub async fn list_buckets(&self) -> Result<Vec<BucketInfo>, Err> {
-        let s3_req = S3Req {
-            method: Method::GET,
-            bucket: None,
-            object: None,
-            query: Values::new(),
-            headers: HeaderMap::new(),
-            body: Body::empty(),
-            ts: time::now_utc(),
-        };
-        let resp = self.signed_req_future(s3_req, Ok(Body::empty())).await?;
-        let mut body = resp.into_body();
-        let s = chunk_to_string(&mut body).await?;
-        xml::parse_bucket_list(s)
-    }
-
+    /// Get request abstraction for lists of objects with output handling
     pub async fn list_objects(
         &self,
         b: &str,
@@ -393,11 +333,108 @@ impl Client {
             ts: time::now_utc(),
         };
         let resp = self.signed_req_future(s3_req, Ok(Body::empty())).await?;
-        let mut body = resp.into_body();
-        let s = chunk_to_string(&mut body).await?;
+        let s = self.parse_response(resp).await?;
         xml::parse_list_objects(s)
     }
 
+    /// Gets location for the bucket_name.
+    pub async fn get_bucket_location(&self, bucket_name: &str) -> Result<Region, Err> {
+        let mut qp = Values::new();
+        qp.set_value("location", None);
+
+        let s3_req = S3Req {
+            method: Method::GET,
+            bucket: Some(bucket_name.to_string()),
+            object: None,
+            headers: HeaderMap::new(),
+            query: qp,
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        match self.signed_req_future(s3_req, Ok(Body::empty())).await {
+            Ok(resp) => {
+                let s = self.parse_response(resp).await?;
+                xml::parse_bucket_location(s)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Deletes bucket
+    pub async fn delete_bucket(&self, bucket_name: &str) -> Result<(), Err> {
+        let s3_req = S3Req {
+            method: Method::DELETE,
+            bucket: Some(bucket_name.to_string()),
+            object: None,
+            headers: HeaderMap::new(),
+            query: Values::new(),
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, Ok(Body::empty())).await?;
+        Ok(())
+    }
+
+    /// Checks if bucket exists
+    pub async fn bucket_exists(&self, bucket_name: &str) -> Result<bool, Err> {
+        let s3_req = S3Req {
+            method: Method::HEAD,
+            bucket: Some(bucket_name.to_string()),
+            object: None,
+            headers: HeaderMap::new(),
+            query: Values::new(),
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        let res = self.signed_req_future(s3_req, Ok(Body::empty())).await;
+        match res {
+            Ok(_) => Ok(true),
+            Err(Err::FailStatusCodeErr(st, b)) => {
+                let code = st.as_u16();
+                if code == 404 {
+                    Ok(false)
+                } else {
+                    Err(Err::FailStatusCodeErr(st, b))
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Creates bucket
+    pub async fn make_bucket(&self, bucket_name: &str) -> Result<(), Err> {
+        let xml_body_res = xml::get_mk_bucket_body();
+        let bucket = bucket_name.clone().to_string();
+        let s3_req = S3Req {
+            method: Method::PUT,
+            bucket: Some(bucket),
+            object: None,
+            query: Values::new(),
+            headers: HeaderMap::new(),
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        self.signed_req_future(s3_req, xml_body_res).await?;
+        Ok(())
+    }
+
+    /// Gets list of buckets
+    pub async fn list_buckets(&self) -> Result<Vec<BucketInfo>, Err> {
+        let s3_req = S3Req {
+            method: Method::GET,
+            bucket: None,
+            object: None,
+            query: Values::new(),
+            headers: HeaderMap::new(),
+            body: Body::empty(),
+            ts: time::now_utc(),
+        };
+        let resp = self.signed_req_future(s3_req, Ok(Body::empty())).await?;
+        let s = self.parse_response(resp).await?;
+        xml::parse_bucket_list(s)
+    }
+
+    /// Creates user or set status
     pub async fn set_user(&self, creds: Credentials, enabled: bool) -> Result<Response<Body>, types::Err> {
         let bucket = "minio/admin/v3";
         let object = "add-user";
@@ -422,6 +459,7 @@ impl Client {
         self.signed_req_future(s3_req, Ok(Body::from(data.clone()))).await
     }
 
+    /// Sets user status
     pub async fn set_user_status(&self, access_key: String, enabled: bool) -> Result<Response<Body>, types::Err> {
         let bucket = "minio/admin/v3";
         let object = "set-user-status";
@@ -441,6 +479,7 @@ impl Client {
         self.signed_req_future(s3_req, Ok(Body::empty())).await
     }
 
+    /// Deletes user
     pub async fn remove_user(&self, access_key: String) -> Result<Response<Body>, types::Err> {
         let bucket = "minio/admin/v3";
         let object = "remove-user";
@@ -459,7 +498,8 @@ impl Client {
         self.signed_req_future(s3_req, Ok(Body::empty())).await
     }
 
-    pub async fn get_user(&self, access_key: String) -> Result<Response<Body>, types::Err> {
+    /// Gets user and status
+    pub async fn get_user(&self, access_key: String) -> Result<String, types::Err> {
         let bucket = "minio/admin/v3";
         let object = "user-info";
         let mut qparams: Values = Values::new();
@@ -474,9 +514,15 @@ impl Client {
             body: Body::empty(),
             ts: time::now_utc(),
         };
-        self.signed_req_future(s3_req, Ok(Body::empty())).await
+        match self.signed_req_future(s3_req, Ok(Body::empty())).await {
+            Ok(resp) => {
+                self.parse_response(resp).await
+            }
+            Err(err) => Err(err),
+        }
     }
 
+    /// Gets user list
     pub async fn list_users(&self) -> Result<String, types::Err> {
         let bucket = "minio/admin/v3";
         let object = "list-users";
@@ -496,7 +542,7 @@ impl Client {
                     None => String::from("this arm should be unreachable")
                 };
                 let mut body = resp.into_body();
-                let ciphertext = chunk_to_bytes(&mut body).await?;
+                let ciphertext = self.chunk_to_bytes(&mut body).await?;
                 let plaintext = sio_decrypt(passwd, ciphertext).await.unwrap();
                 let user_list = String::from_utf8(plaintext).unwrap();
                 Ok(user_list)
@@ -505,6 +551,7 @@ impl Client {
         }
     }
 
+    /// Sets group parameters incuding membership and boolean flag to delete (if there are no members)
     pub async fn set_group(&self, params: GroupParams) -> Result<Response<Body>, types::Err> {
         let bucket = "minio/admin/v3";
         let object = "update-group-members";
@@ -521,17 +568,11 @@ impl Client {
         self.signed_req_future(s3_req, Ok(Body::from(data.clone()))).await
     }
 
+    /// Convenience method to create user and return their state
     pub async fn make_user(&self, creds: Credentials) -> Result<String, types::Err> {
         let ak = String::from(&creds.access_key);
         match  self.set_user(creds, true).await {
-            Ok(_) => match self.get_user(ak).await {
-                Ok(resp) => {
-                    let mut body = resp.into_body();
-                    let s = chunk_to_string(&mut body).await?;
-                    Ok(s)
-                }
-                Err(err) => Err(err),
-            },
+            Ok(_) => self.get_user(ak).await,
             Err(e) => Err(e)
         }
     }
@@ -554,23 +595,6 @@ impl Client {
 //     }
 // }
 
-/// Converts a `hyper::Chunk` into a string.
-async fn chunk_to_string(chunk: &mut hyper::Body) -> Result<String, Err> {
-    match hyper::body::aggregate(chunk).await {
-        Ok(s) => match String::from_utf8(s.chunk().to_vec()) {
-            Err(e) => Err(Err::Utf8DecodingErr(e)),
-            Ok(s) => Ok(s.to_string()),
-        },
-        Err(err) => Err(Err::HyperErr(err)),
-    }
-}
-
-async fn chunk_to_bytes(chunk: &mut hyper::Body) -> Result<Vec<u8>, Err> {
-    match hyper::body::aggregate(chunk).await {
-        Ok(s) => Ok(s.chunk().to_vec()),
-        Err(err) => Err(Err::HyperErr(err)),
-    }
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
